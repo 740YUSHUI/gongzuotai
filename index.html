@@ -1011,6 +1011,25 @@ const NS=document.createElement('style');NS.textContent=`
 .wiz-step.cur{background:var(--primary);color:#fff}
 .ai-res-item{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:6px}
 .multisel{max-height:110px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px}
+/* ---- 对话语音条（参考状态卡 voice-bar） ---- */
+.voice-bar{display:inline-flex;align-items:center;gap:10px;padding:6px 14px 6px 12px;border-radius:20px;cursor:pointer;user-select:none;-webkit-user-select:none;transition:all .25s cubic-bezier(.4,0,.2,1);margin-top:6px;background:var(--bg-tag);border:1px solid var(--border);position:relative;min-width:96px;max-width:100%}
+.voice-bar:hover{transform:scale(1.02);box-shadow:var(--shadow);border-color:var(--accent)}
+.voice-bar.playing{background:var(--accent-light);border-color:var(--accent)}
+.voice-bar .voice-icon{width:18px;height:18px;flex-shrink:0;background-color:var(--primary);-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z'/%3E%3Cpath d='M19 10v2a7 7 0 0 1-14 0v-2'/%3E%3Cline x1='12' y1='19' x2='12' y2='23'/%3E%3Cline x1='8' y1='23' x2='16' y2='23'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z'/%3E%3Cpath d='M19 10v2a7 7 0 0 1-14 0v-2'/%3E%3Cline x1='12' y1='19' x2='12' y2='23'/%3E%3Cline x1='8' y1='23' x2='16' y2='23'/%3E%3C/svg%3E");-webkit-mask-size:contain;mask-size:contain;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;transition:background-color .3s}
+.voice-bar .voice-wave{display:flex;align-items:center;gap:2px;height:20px;opacity:.3;transition:opacity .3s}
+.voice-bar.playing .voice-wave{opacity:1}
+.voice-bar .voice-wave span{display:block;width:3px;border-radius:2px;background:var(--accent);animation:voiceWaveAnim 0s ease-in-out infinite}
+.voice-bar.playing .voice-wave span{animation:voiceWaveAnim .8s ease-in-out infinite}
+.voice-bar .voice-wave span:nth-child(1){height:8px;animation-delay:0s}
+.voice-bar .voice-wave span:nth-child(2){height:14px;animation-delay:.15s}
+.voice-bar .voice-wave span:nth-child(3){height:10px;animation-delay:.3s}
+.voice-bar .voice-wave span:nth-child(4){height:16px;animation-delay:.45s}
+.voice-bar .voice-wave span:nth-child(5){height:6px;animation-delay:.6s}
+@keyframes voiceWaveAnim{0%,100%{transform:scaleY(.5);opacity:.4}50%{transform:scaleY(1.2);opacity:1}}
+.voice-bar .voice-duration{font-size:11px;font-weight:600;color:var(--text-secondary);font-variant-numeric:tabular-nums;min-width:44px;text-align:right;letter-spacing:.3px}
+.voice-bar.playing .voice-duration{color:var(--primary)}
+.voice-bar.loading .voice-icon{animation:voiceLoadingSpin 1s linear infinite}
+@keyframes voiceLoadingSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 `;document.head.appendChild(NS);
 })();
 /* ---------- 升级与初始化 ---------- */
@@ -1563,9 +1582,43 @@ const AIVoice={
   const blob=new Blob([bytes],{type:'audio/'+fmt});
   return{blob:blob,url:URL.createObjectURL(blob),chars:(j.extra_info&&j.extra_info.usage_characters)||(opts.text||'').length,fmt:fmt,hex:hex.slice(0,16)};
  },
- async speakMessage(msg,conv,forceEmotion){
+ /* ---- 语音条播放控制器 ---- */
+ _audio:null,_audioMsgId:null,_urls:{},
+ fmtDur(s){if(!isFinite(s)||s<=0)return'0:00';const m=Math.floor(s/60),x=Math.round(s%60);return m+':'+String(x).padStart(2,'0')},
+ bars(id){return document.querySelectorAll('.voice-bar[data-msg-id="'+id+'"]')},
+ stopAudio(){
+  if(AIVoice._audio){try{AIVoice._audio.pause()}catch(e){}}
+  AIVoice._audio=null;AIVoice._audioMsgId=null;
+  document.querySelectorAll('.voice-bar.playing,.voice-bar.loading').forEach(el=>el.classList.remove('playing','loading'));
+ },
+ startPlayback(id,url){
+  AIVoice.stopAudio();
+  const audio=new Audio(url);
+  AIVoice._audio=audio;AIVoice._audioMsgId=id;
+  AIVoice.bars(id).forEach(b=>{b.classList.remove('loading');b.classList.add('playing')});
+  audio.onloadedmetadata=()=>{if(AIVoice._audioMsgId===id&&isFinite(audio.duration)&&audio.duration>0)AIVoice.bars(id).forEach(b=>{const d=b.querySelector('.voice-duration');if(d)d.textContent=AIVoice.fmtDur(audio.duration)})};
+  audio.onended=()=>{if(AIVoice._audioMsgId===id){AIVoice._audio=null;AIVoice._audioMsgId=null;AIVoice.bars(id).forEach(b=>b.classList.remove('playing'))}};
+  audio.onerror=()=>{if(AIVoice._audioMsgId===id){AIVoice._audio=null;AIVoice._audioMsgId=null;AIVoice.bars(id).forEach(b=>b.classList.remove('playing','loading'))}};
+  audio.play().catch(()=>{});
+  return audio;
+ },
+ async play(id,conv){
+  if(AIVoice._audio&&AIVoice._audioMsgId===id){AIVoice.stopAudio();return}
+  if(document.querySelector('.voice-bar[data-msg-id="'+id+'"].loading'))return;
+  AIVoice.stopAudio();
+  const msg=await DB.get(STORES.aiMessages,id);if(!msg)return;
+  AIVoice.bars(id).forEach(b=>b.classList.add('loading'));
+  let url=AIVoice._urls[id];
+  if(!url){
+   const r=await AIVoice.speakMessage(msg,conv,null,{autoplay:false});
+   if(!r||!r.url){AIVoice.bars(id).forEach(b=>b.classList.remove('loading'));return}
+   url=r.url;
+  }
+  AIVoice.startPlayback(id,url);
+ },
+ async speakMessage(msg,conv,forceEmotion,opts){
   const conn=await AIConn.byId(conv.ttsConnId);
-  if(!conn){Toast.warning('该会话未绑定语音连接');return null}
+  if(!conn){Toast.warning('该会话未绑定语音连接');AIVoice.bars(msg.id).forEach(b=>b.classList.remove('loading'));return null}
   const parsed=AIVoice.parseEmotionTag(msg.content);
   let emotion=forceEmotion||null;let audit;
   if(!emotion){
@@ -1578,14 +1631,22 @@ const AIVoice={
   try{
    const speed=AIVoice.speedFor(emotion,(conn.tts||{}).speed);
    const r=await AIVoice.synthesize(conn,{text:clean,emotion:emotion,voiceId:voiceId,speed:speed});
+   AIVoice._urls[msg.id]=r.url;
    msg.audio={hash:r.hex,dataUrl:r.url,fmt:r.fmt,chars:r.chars};
    msg.emotion={tag:parsed.tag,mapped:audit.mapped,source:audit.source,degraded:audit.degraded,used:emotion};
    await DB.put(STORES.aiMessages,msg);
-   if(document.getElementById('ai-msg-'+msg.id))AIChat.renderMsg(msg,conv,true);
+   const live=document.getElementById('ai-msg-'+msg.id);
+   if(!(opts&&opts.autoplay===false)){
+    AIVoice.startPlayback(msg.id,r.url);
+    if(live){const box=document.getElementById('ai-msgs');if(box)box.scrollTop=box.scrollHeight}
+   }else{
+    AIVoice.bars(msg.id).forEach(b=>b.classList.remove('loading'));
+   }
    return r;
   }catch(e){
    const m=AIAdapters.classifyError(e,e.status);
    msg.emotion={tag:parsed.tag,mapped:audit.mapped,source:audit.source,degraded:true,error:m};
+   AIVoice.bars(msg.id).forEach(b=>b.classList.remove('loading'));
    Toast.error('语音合成失败：'+m);
    return null;
   }
@@ -1886,11 +1947,11 @@ const AIChat={
   const emo=m.emotion&&(m.emotion.used||m.emotion.mapped);
   const acts=[];
   if(m.role==='user')acts.push('<button onclick="AIChat.editMsg(\''+m.id+'\')">编辑(回溯)</button>');
-  else{acts.push('<button onclick="AIChat.regen(\''+m.id+'\')">让他重说</button>');if(conv.ttsConnId){acts.push('<button onclick="AIChat.play(\''+m.id+'\')">播放语音</button>');acts.push('<button onclick="AIChat.speakWith(\''+m.id+'\')">情绪播报</button>')}}
+  else{acts.push('<button onclick="AIChat.regen(\''+m.id+'\')">让他重说</button>');if(conv.ttsConnId){acts.push('<button onclick="AIChat.speakWith(\''+m.id+'\')">情绪播报</button>')}}
   acts.push('<button onclick="AIChat.copy(\''+m.id+'\')">复制</button>');
   acts.push('<button onclick="AIChat.bookmark(\''+m.id+'\')">'+(m.bookmarked?'★取消':'☆书签')+'</button>');
   if(AIChat._selMode)acts.push('<label style="font-size:11px"><input type="checkbox" '+(AIChat._sel[m.id]?'checked':'')+' onchange="AIChat.toggleSel(\''+m.id+'\',this.checked)"> 选</label>');
-  return '<div class="ai-msg '+m.role+(m.proactive?' proactive':'')+'" id="ai-msg-'+m.id+'" title="'+(m.aiGenerated?'AI 生成内容，仅供参考':'')+'">'+(m.aiGenerated?'<span class="ai-tag mut">AI</span>':'')+(m.bookmarked?'<span style="position:absolute;top:-8px;left:8px">⭐</span>':'')+txt+(m.status==='stopped'?'<div style="font-size:10px;opacity:.6">（已手动停止）</div>':'')+(m.status==='error'?'<div style="font-size:10px;color:var(--berry)">生成中断</div>':'')+(emo?'<div style="font-size:10px;opacity:.6;margin-top:3px">语音情绪：'+Utils.esc(String(emo))+(m.emotion&&m.emotion.degraded?'（已降级）':'')+'</div>':'')+(m.audio&&m.audio.fmt?'<audio controls src="'+m.audio.dataUrl+'" style="height:24px;margin-top:4px;max-width:100%"></audio>':'')+'<div class="ai-acts">'+acts.join('')+'</div></div>';
+  return '<div class="ai-msg '+m.role+(m.proactive?' proactive':'')+'" id="ai-msg-'+m.id+'" title="'+(m.aiGenerated?'AI 生成内容，仅供参考':'')+'">'+(m.aiGenerated?'<span class="ai-tag mut">AI</span>':'')+(m.bookmarked?'<span style="position:absolute;top:-8px;left:8px">⭐</span>':'')+txt+(m.status==='stopped'?'<div style="font-size:10px;opacity:.6">（已手动停止）</div>':'')+(m.status==='error'?'<div style="font-size:10px;color:var(--berry)">生成中断</div>':'')+(emo?'<div style="font-size:10px;opacity:.6;margin-top:3px">语音情绪：'+Utils.esc(String(emo))+(m.emotion&&m.emotion.degraded?'（已降级）':'')+'</div>':'')+(conv&&conv.ttsConnId&&m.role!=='user'&&!m.proactive?AIChat.voiceBarHtml(m):'')+'<div class="ai-acts">'+acts.join('')+'</div></div>';
  },
  renderSelbar(conv){
   const el=document.getElementById('ai-selbar');if(!el)return;
@@ -2100,12 +2161,15 @@ const AIChat={
  },
  async copy(id){const m=await DB.get(STORES.aiMessages,id);if(m){try{await navigator.clipboard.writeText(AIVoice.parseEmotionTag(m.content).clean);Toast.success('已复制')}catch(e){Toast.error('复制失败')}}},
  async bookmark(id){const m=await DB.get(STORES.aiMessages,id);if(m){m.bookmarked=!m.bookmarked;await DB.put(STORES.aiMessages,m);AIChat.renderMain()}},
+ voiceBarHtml(m){
+  const playing=(AIVoice._audioMsgId===m.id&&AIVoice._audio)?' playing':'';
+  const dur=(m.audio&&m.audio.dur)?AIVoice.fmtDur(m.audio.dur):'▶ 点击播放';
+  return '<div class="voice-bar'+playing+'" data-msg-id="'+m.id+'" onclick="AIChat.play(\''+m.id+'\')" title="点击播放 / 再点停止"><span class="voice-icon"></span><div class="voice-wave"><span></span><span></span><span></span><span></span><span></span></div><span class="voice-duration">'+dur+'</span></div>';
+ },
  async play(id){
   const conv=await AIChat.convById(AIChat._cur);if(!conv)return;
-  const msg=await DB.get(STORES.aiMessages,id);if(!msg)return;
-  if(msg.audio&&msg.audio.dataUrl&&msg.audio.url){try{new Audio(msg.audio.url).play();return}catch(e){}}
-  if(!conv.ttsConnId){Toast.warning('该会话未绑定语音连接');return}
-  AIVoice.speakMessage(msg,conv);
+  if(!conv.ttsConnId){Toast.warning('该会话未绑定语音连接，请在会话设置中绑定');return}
+  AIVoice.play(id,conv);
  },
  async speakWith(id){
   const conv=await AIChat.convById(AIChat._cur);if(!conv)return;
